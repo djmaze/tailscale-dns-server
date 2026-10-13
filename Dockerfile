@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Build the DNS server.
-FROM docker.io/library/golang:1.26-alpine3.23 AS build
+FROM docker.io/library/golang:1.27-alpine3.23 AS build
 WORKDIR /src
 
 # Cache module downloads independently of source changes.

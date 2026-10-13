@@ -12,7 +12,6 @@ import (
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
-	"tailscale.com/types/netmap"
 )
 
 // node builds a full tailcfg.Node as it arrives on the IPN bus
@@ -38,11 +37,10 @@ func statusPeer(id tailcfg.NodeID, fqdn, host string, ips ...string) *ipnstate.P
 	return ps
 }
 
-// newTestHandler feeds the same notification sequence a live daemon
-// produces: first the legacy-style netmap snapshot via the deprecated
-// path is NOT used here; instead the modern one — InitialStatus, then
-// SelfChange, then a full PeersChanged batch (which is what tailscaled
-// emits to PeerChanges watchers on the first netmap sync).
+// newTestHandler feeds the notification sequence a live daemon produces:
+// InitialStatus (the session's authoritative snapshot), then SelfChange,
+// then a full PeersChanged batch (which is what tailscaled emits to
+// PeerChanges watchers on the first netmap sync).
 func newTestHandler() *Handler {
 	h := &Handler{
 		zone:    "example.com",
@@ -220,18 +218,21 @@ func TestResolveSelfKeyExcludedFromPeers(t *testing.T) {
 	}
 }
 
-func TestLegacyNetmapStillAccepted(t *testing.T) {
-	// The fallback subscription: a full Notify.NetMap must rebuild
-	// everything, self + peers, including VIP services.
-	h := &Handler{zone: "example.com", fall: fall.Root, entries: map[string]map[string][]string{}}
-	nm := &netmap.NetworkMap{
-		SelfNode: node(1, "dns", "100.64.0.1", "fd7a::1", "tag:cname-resolver").View(),
-		Peers:    []tailcfg.NodeView{node(2, "db", "100.64.0.2", "fd7a::2").View()},
+func TestReconnectResyncs(t *testing.T) {
+	// A fresh bus session re-delivers InitialStatus; it must replace the
+	// table wholesale, dropping peers the daemon no longer reports.
+	h := newTestHandler()
+	h.handleNotify(&ipn.Notify{
+		InitialStatus: &ipnstate.Status{
+			CurrentTailnet: &ipnstate.TailnetStatus{MagicDNSSuffix: "example.net"},
+			Self:           statusPeer(1, "dns.example.net.", "dns", "100.64.0.1"),
+		},
+	})
+	if _, w := query(h, "db.example.com", dns.TypeA); w.msg != nil {
+		t.Fatalf("db must be gone after resync, got %+v", w.msg)
 	}
-	h.handleNotify(&ipn.Notify{NetMap: nm})
-	_, w := query(h, "db.example.com", dns.TypeA)
-	if w.msg == nil || len(w.msg.Answer) != 1 {
-		t.Fatalf("want 1 answer from legacy netmap, got %+v", w.msg)
+	if _, w := query(h, "dns.example.com", dns.TypeA); w.msg == nil || len(w.msg.Answer) != 1 {
+		t.Fatalf("want 1 answer after resync, got %+v", w.msg)
 	}
 }
 

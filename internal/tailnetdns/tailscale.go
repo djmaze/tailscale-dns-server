@@ -89,43 +89,25 @@ func (t *Handler) Start(srv *tsnet.Server) error {
 	return nil
 }
 
-// busMask is the IPN bus subscription used by watchIPNBus.
+// busMask is the IPN bus subscription used by watchIPNBus — the same
+// bits upstream's containerboot uses.
 //
-// ipn.Notify.NetMap is deprecated: the initial one only carries it if a
-// netmap already exists at subscribe time, and subsequent messages carry
-// it only when tailscaled runs on Windows (goosGetsLegacyNetmapNotify in
-// ipn/ipnlocal). A NetMap-driven watcher on Linux therefore either starts
-// empty or freezes on a startup snapshot taken before the node connected.
-// The supported replacement, the same subscription upstream's own
-// containerboot uses, is:
+// The deprecated ipn.Notify.NetMap field this replaces no longer exists:
+// the daemon used to send it on runtime notifications only when running
+// on Windows, and a NetMap-driven watcher on Linux therefore started
+// empty or froze on the startup snapshot. The supported replacement is:
 //
-//   - NotifyInitialStatus: the complete current state (self + peers) as
-//     the first Notify of the session, re-delivered after every reconnect;
+//   - NotifyInitialStatus: the complete current state (self + peers, the
+//     latter populated because we also set NotifyPeerChanges) as the
+//     first Notify of the session, re-delivered after every reconnect;
 //   - NotifyPeerChanges: PeersChanged upserts (without NotifyPeerPatches
 //     the daemon promotes every narrow per-field patch into a full Node,
 //     so every per-peer mutation is observed) and PeersRemoved;
-//   - NotifyNoNetMap: never send the legacy field on runtime messages
-//     (a no-op on Linux, bandwidth savings when tailscaled runs on
-//     Windows);
 //
 // plus Notify.SelfChange, which the daemon always delivers when the full
-// tailcfg.Node of this node changes. If the daemon is too old to know
-// these bits, WatchIPNBus rejects the mask and watchIPNBus falls back to
-// the legacy NotifyInitialNetMap subscription, which at least still
-// delivers the initial netmap on any daemon.
-const busMask = ipn.NotifyInitialStatus | ipn.NotifyPeerChanges | ipn.NotifyNoNetMap
-
-// legacyBusMask is the pre-PeerChanges subscription, used only as a
-// fallback for tailscaled versions that reject busMask. There it still
-// delivers the initial netmap on any platform; runtime NetMap updates,
-// however, only flow on Windows, which is why watchIPNBus periodically
-// reconnects in that mode (resyncInterval).
-const legacyBusMask = ipn.NotifyInitialNetMap | ipn.NotifyNoPrivateKeys
-
-// resyncInterval is how long a legacy-fallback watch is allowed to stay
-// connected before it is torn down to force a fresh initial-netmap
-// snapshot through.
-const resyncInterval = 5 * time.Minute
+// tailcfg.Node of this node changes. Together they stitch a continuous
+// view of the netmap without the netmap.
+const busMask = ipn.NotifyInitialStatus | ipn.NotifyPeerChanges
 
 // watchIPNBus watches the Tailscale IPN bus and keeps the DNS entries up
 // to date from the resulting notifications. It does not return; if
@@ -133,34 +115,15 @@ const resyncInterval = 5 * time.Minute
 func (t *Handler) watchIPNBus() {
 	for {
 		watcher, err := t.lc.WatchIPNBus(context.Background(), busMask)
-		legacy := false
-		if err != nil {
-			log.Warningf("Tailscale event bus rejected the %v subscription (%v), falling back to the legacy netmap subscription", busMask, err)
-			watcher, err = t.lc.WatchIPNBus(context.Background(), legacyBusMask)
-			legacy = err == nil
-		}
 		if err != nil {
 			log.Warningf("unable to read from Tailscale event bus, retrying in 1 minute: %v", err)
 			time.Sleep(1 * time.Minute)
 			continue
 		}
-
-		// In legacy fallback mode a runtime netmap update may never
-		// arrive on this platform (the daemon stopped sending
-		// Notify.NetMap on the bus), so the entries could go stale for
-		// as long as the connection stays up. Periodically close the
-		// watcher to force a reconnect, which redelivers the initial
-		// NetMap snapshot. In the normal mode InitialStatus plus the
-		// delta stream cover everything and no polling is needed.
-		if legacy {
-			w := watcher
-			go func() {
-				time.Sleep(resyncInterval)
-				w.Close() // unblocks Next; the loop below reconnects
-			}()
-		}
-
 		if err := t.consumeWatcher(watcher); err != nil {
+			// Watch failed; reconnect. The new session re-delivers
+			// InitialStatus, which rebuilds the whole node table, so a
+			// delta missed across the gap can never strand the entries.
 			log.Debugf("Tailscale event bus watch ended: %v", err)
 		}
 		watcher.Close()
@@ -186,14 +149,6 @@ func (t *Handler) handleNotify(n *ipn.Notify) {
 	t.nmu.Lock()
 	defer t.nmu.Unlock()
 	dirty := false
-
-	// Legacy fallback (and the deprecated field in general): a full
-	// netmap snapshot is authoritative, rebuild everything from it.
-	if n.NetMap != nil {
-		t.mergeNetmap(n.NetMap)
-		t.publish()
-		return
-	}
 
 	// InitialStatus is a complete snapshot of self + peers, delivered as
 	// the first Notify of a session. Treat it as authoritative rather
@@ -285,39 +240,6 @@ func (t *Handler) mergeStatus(st *ipnstate.Status) {
 		}
 		if ni := nodeInfoFromStatus(ps, t.magicSuffix); ni != nil {
 			peers[ps.NodeID] = ni
-		}
-	}
-
-	t.self, t.selfID, t.peers = self, selfID, peers
-}
-
-// mergeNetmap rebuilds the node table from a full netmap snapshot (the
-// deprecated Notify.NetMap, received only on the legacy fallback
-// subscription). t.nmu must be held.
-func (t *Handler) mergeNetmap(nm *netmap.NetworkMap) {
-	if suffix := nm.MagicDNSSuffix(); suffix != "" {
-		t.magicSuffix = suffix
-	}
-
-	var self *nodeInfo
-	var selfID tailcfg.NodeID
-	if sn := nm.SelfNode; sn.Valid() {
-		selfID = sn.ID()
-		self = nodeInfoFromNode(sn.AsStruct(), t.magicSuffix)
-		if self != nil {
-			for _, svc := range nm.Services() {
-				self.services = append(self.services, svc)
-			}
-		}
-	}
-
-	peers := make(map[tailcfg.NodeID]*nodeInfo, len(nm.Peers))
-	for _, p := range nm.Peers {
-		if !p.Valid() || p.ID() == 0 || p.ID() == selfID {
-			continue
-		}
-		if ni := nodeInfoFromNode(p.AsStruct(), t.magicSuffix); ni != nil {
-			peers[p.ID()] = ni
 		}
 	}
 
@@ -428,9 +350,10 @@ func validLabel(name string) bool {
 	return name != "" && !strings.Contains(name, ".")
 }
 
-// nodeServices extracts the VIP service definitions from a node's CapMap
-// (the "services/..." capability entries), the same source
-// netmap.NetworkMap.Services reads for the self node.
+// nodeServices extracts the VIP service definitions from a node's
+// CapMap: the "services/..." capability entries hold one JSON-encoded
+// tailcfg.ServiceDetails each, which is how control announces VIP
+// services to the node that offers them.
 func nodeServices(n *tailcfg.Node) []tailcfg.ServiceDetails {
 	if n == nil || len(n.CapMap) == 0 {
 		return nil
