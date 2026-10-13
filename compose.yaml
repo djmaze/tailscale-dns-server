@@ -1,0 +1,42 @@
+# Run with:
+#   cp .env.example .env    # then set the domains and optionally the auth key
+#   docker compose up -d --build
+services:
+  dns:
+    build:
+      context: .
+    image: decentralize/tailscale-dns-server:latest
+    environment:
+      # Required — compose fails here if either is unset or empty.
+      DNS_DOMAIN: ${DNS_DOMAIN:?DNS_DOMAIN is required, e.g. example.com}
+      TAILSCALE_DOMAIN: ${TAILSCALE_DOMAIN:?TAILSCALE_DOMAIN is required, e.g. example.net}
+      # Optional — defaults are baked into the image.
+      TS_HOSTNAME: ${TS_HOSTNAME:-coredns-test}
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      DNS_PORT: ${DNS_PORT:-53}
+      # Upstream resolver(s) for names outside the tailnet. Deliberately
+      # not /etc/resolv.conf here: inside the container that points at the
+      # container runtime's resolver (e.g. podman's aardvark-dns on the
+      # network gateway), which does not always answer and then produces
+      # SERVFAIL after an i/o timeout. Set your own if you prefer a LAN
+      # resolver or Pi-hole.
+      UPSTREAM_DNS: "${UPSTREAM_DNS:-1.1.1.1:53 8.8.8.8:53}"
+    # ports:
+      # The container runs as root and listens on DNS_PORT directly.
+      # With TS_AUTHKEY set, tailnet peers reach the server on the node's
+      # tailnet IPs without any port mapping; the mapping below is only for
+      # LAN/loopback clients of the Docker host.
+      # - "53:53/udp"
+      # - "53:53/tcp"
+    volumes:
+      # tsnet node key and state (lives in $HOME/tsnet).
+      - data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z -w 2 127.0.0.1 ${DNS_PORT:-53}"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  data:

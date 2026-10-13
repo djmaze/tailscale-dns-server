@@ -1,0 +1,12 @@
+# Prebuilt binaries and local scratch, not build inputs.
+tailscale-dns-server
+*.bak
+.env
+compose.yaml
+.env.example
+.phom/
+.tmp/
+.xdg/
+out/
+Dockerfile
+.dockerignore

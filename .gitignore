@@ -1,0 +1,14 @@
+# Secrets: real domains and the tailnet auth key live here, never commit.
+# Use .env.example as the template.
+.env
+
+# Prebuilt binary (the Dockerfile / go build output lives in the tree).
+/tailscale-dns-server
+*.bak
+
+# Local scratch.
+.tmp/
+.out/
+out/
+.xdg/
+.phom/
