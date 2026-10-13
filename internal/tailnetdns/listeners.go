@@ -15,9 +15,9 @@ import (
 
 // ServeTailnet attaches DNS listeners on the tailnet addresses of srv and
 // serves them through the same plugin chain (cfg) that backs the loopback
-// server. tsnet delivers traffic destined for the node's own tailnet IPs
-// to these listeners, so tailnet peers can reach this DNS server on the
-// node's tailnet IPs without a TUN device or extra privileges.
+// server. tsnet routes traffic for the node's own tailnet IPs to these
+// listeners, so tailnet peers can reach this DNS server without a TUN
+// device or extra privileges.
 //
 // It waits for the node to come Up, then binds:
 //
@@ -58,10 +58,9 @@ type tailnet struct {
 }
 
 // bind creates the tailnet listeners and starts serving on them. Each
-// listener gets its own dnsserver.Server compiled from cfg; the plugin
-// instances behind cfg.Plugin are shared, and the AddPlugin closures are
-// idempotent (they re-wire .Next to the same handlers), so compiling the
-// same Config repeatedly is safe.
+// listener gets its own dnsserver.Server from cfg. Recompiling the same
+// cfg is safe: the plugins it holds are shared and its AddPlugin
+// closures are idempotent.
 func (t *tailnet) bind() error {
 	ip4, ip6 := t.srv.TailscaleIPs()
 	if !ip4.IsValid() && !ip6.IsValid() {

@@ -30,11 +30,9 @@ import (
 const defaultTailscaleHostname = "coredns-test"
 
 // Default for the optional upstream resolver setting: the system
-// resolvers, i.e. the behaviour before the setting existed. Note that
-// inside a container /etc/resolv.conf is written by the container runtime
-// (podman's aardvark-dns on the network gateway, Docker's embedded
-// resolver, 127.0.0.53 under systemd-resolved), which does not always
-// answer; there it is worth setting explicit resolvers via UPSTREAM_DNS.
+// resolvers. Inside a container /etc/resolv.conf is written by the
+// container runtime and does not always answer, so prefer setting
+// explicit resolvers via UPSTREAM_DNS there.
 const defaultUpstreamDNS = "/etc/resolv.conf"
 
 // validDomain accepts the labels we need to interpolate into the Caddyfile
@@ -109,14 +107,13 @@ func envBoolOr(key string, def bool) bool {
 	return def
 }
 
-// caddyfileTemplate is the CoreDNS Caddyfile, parameterized by the served
-// DNS zone (%[1]s), the listen port (%[2]s), the tailscale domain the
-// tailscale plugin resolves (%[3]s), the upstream resolver targets for
-// everything that misses the tailnet (%[4]s, one forward target or more,
-// space separated) and the optional debug directive (%[5]s, the debug line
-// or empty). Tailnet listeners are attached separately in main once the
-// embedded tsnet node is up; the hostname the node registers with is a
-// main-level setting, not a directive option.
+// caddyfileTemplate is the CoreDNS Caddyfile, parameterized by the
+// served DNS zone (%[1]s), the listen port (%[2]s), the tailscale domain
+// to resolve (%[3]s), the upstream resolver targets for everything that
+// misses the tailnet (%[4]s, space separated) and the optional debug
+// directive (%[5]s, the debug line or empty). Tailnet listeners are
+// attached separately in main once the tsnet node is up; the node's
+// hostname is a main-level setting, not a directive option.
 const caddyfileTemplate = `
 %[1]s:%[2]s {
 	tailscale %[3]s {
@@ -130,9 +127,9 @@ const caddyfileTemplate = `
 
 // renderCaddyfile renders the Caddyfile contents. The debug directive is
 // only emitted when debug is enabled; without it CoreDNS suppresses
-// debug-level log messages and keeps its automatic panic recovery. (With
-// the errors plugin in the chain a recover handler stays installed either
-// way, so in practice the directive controls log verbosity.)
+// debug-level messages and keeps its automatic panic recovery. (With the
+// errors plugin in the chain a recover handler is installed either way,
+// so the directive mainly controls log verbosity.)
 func renderCaddyfile(dnsDomain, dnsPort, tailscaleDomain, upstream string, debug bool) string {
 	debugDirective := ""
 	if debug {
@@ -197,9 +194,9 @@ func main() {
 	}
 
 	// With an auth key main owns an embedded tailscale node (tsnet): the
-	// handler resolves names through it, and tailnet DNS listeners are
-	// attached on its tailnet IPs. Without one, the handler connects to a
-	// local tailscaled socket and no tailnet listeners are possible.
+	// handler resolves names through it and tailnet listeners attach on
+	// its tailnet IPs. Without one the handler uses a local tailscaled
+	// socket and tailnet listeners are not possible.
 	var srv *tsnet.Server
 	if *tailscaleAuthKey != "" {
 		dir := *tsDir
@@ -236,14 +233,12 @@ func main() {
 	fmt.Printf("Serving DNS domain %s on port %s, tailscale domain %s, upstream %s (hostname %s, %s, debug %s)\n",
 		*dnsDomain, *dnsPort, *tailscaleDomain, upstream, *tailscaleHostname, mode, debugMode)
 
-	// dnsserver.Directives is the order in which plugins handle a request,
-	// NOT the order in the Caddyfile above: the chain is compiled from this
-	// slice, not from the Corefile. log and errors are wrappers that only
-	// see (and log) requests that still reach them, so they must run before
-	// the plugins that answer and write the response; tailscale must run
-	// before forward so tailnet names resolve there first and only misses
-	// fall through to forward. debug is always listed but only ever set up
-	// when the Caddyfile contains the directive, i.e. when -debug is on.
+	// dnsserver.Directives is the order plugins handle a request in, NOT
+	// the Caddyfile order above: the chain is compiled from this slice.
+	// log and errors are wrappers, so they must run before the plugins
+	// that answer and write the response; tailscale must run before
+	// forward so tailnet names resolve there first and only misses fall
+	// through. debug is always listed but only set up when -debug is on.
 	dnsserver.Directives = []string{"debug", "errors", "log", "tailscale", "forward"}
 	instance, err := caddy.Start(caddy.CaddyfileInput{
 		Filepath:       "Corefile",
@@ -264,9 +259,9 @@ func main() {
 		panic(fmt.Sprintf("starting tailscale handler: %v", err))
 	}
 
-	// Serve DNS on the node's own tailnet IPs too (Option B): CoreDNS
-	// itself bound 0.0.0.0:53, which has no route from the tailnet because
-	// the embedded node has no interface. These tsnet listeners do.
+	// Serve DNS on the node's own tailnet IPs too: CoreDNS itself bound
+	// 0.0.0.0:53, which the tailnet cannot route to because the embedded
+	// node has no interface. These tsnet listeners do.
 	ctx, cancel := context.WithCancel(context.Background())
 	var stopTailnet func()
 	if srv != nil {

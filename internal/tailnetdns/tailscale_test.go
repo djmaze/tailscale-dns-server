@@ -129,8 +129,8 @@ func TestResolveSelfFromStatusOnly(t *testing.T) {
 }
 
 func TestResolvePeerAddedAfterStart(t *testing.T) {
-	// The core of the NetMap deprecation fix: a peer that appears only
-	// after startup must become resolvable through the delta stream.
+	// A peer that appears only after startup must become resolvable
+	// through the delta stream, not just the InitialStatus snapshot.
 	h := newTestHandler()
 	if _, w := query(h, "new.example.com", dns.TypeA); w.msg != nil {
 		t.Fatalf("new should not exist yet, got %+v", w.msg)

@@ -6,10 +6,9 @@ import (
 	"github.com/coredns/coredns/plugin"
 )
 
-// active is the handler built by the tailscale directive of the last
-// parsed server block; main retrieves it after caddy.Start to connect it
-// to the tailnet and to reuse its server-block Config for the tailnet
-// listeners.
+// active is the handler built by the last parsed server block's
+// tailscale directive; main retrieves it after caddy.Start to attach the
+// tailnet and reuse its Config.
 var active *Handler
 
 func init() { plugin.Register("tailscale", setup) }
@@ -45,10 +44,9 @@ func setup(c *caddy.Controller) error {
 	cfg := dnsserver.GetConfig(c)
 	ts.cfg = cfg
 
-	// The closure runs once per compiled dnsserver.Server that includes
-	// this Config (the loopback one and each tailnet one), always handing
-	// out the same handler instance. Recompiling just rewires its next
-	// pointer, which is why repeated compilation is safe.
+	// Runs once per compiled dnsserver.Server using this Config (the
+	// loopback one and each tailnet one), always handing out the same
+	// handler instance; recompiling just rewires its next pointer.
 	cfg.AddPlugin(func(next plugin.Handler) plugin.Handler {
 		ts.next = next
 		return ts
@@ -62,6 +60,6 @@ func setup(c *caddy.Controller) error {
 // if no server block used it.
 func Active() *Handler { return active }
 
-// Config returns the server-block Config this handler belongs to; main
-// passes it to ServeTailnet so tailnet listeners reuse the same plugins.
+// Config returns the server-block Config this handler belongs to, which
+// main passes to ServeTailnet for the tailnet listeners.
 func (t *Handler) Config() *dnsserver.Config { return t.cfg }

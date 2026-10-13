@@ -1,18 +1,16 @@
 // Package tailnetdns resolves DNS names for tailnet nodes, VIP services
 // and tag-based CNAMEs.
 //
-// Based on github.com/damomurf/coredns-tailscale (Copyright (c) 2022
-// coredns-tailscale Authors, MIT licensed), from which the DNS record
-// mapping and serving logic are copied with these changes:
+// Based on github.com/damomurf/coredns-tailscale (MIT licensed), from
+// which the DNS record mapping and serving logic are copied, with these
+// changes:
 //
-//   - the tsnet.Server is injected by the caller (main) instead of being
-//     created inside the plugin, so the same tailnet node can also host
-//     the tailnet DNS listeners;
-//   - start() errors are returned to the caller instead of being
-//     swallowed at setup time;
-//   - the entries map is treated as immutable once published (each
-//     tailnet state update swaps in a fresh map), so queries read it
-//     without holding a lock across fallthrough calls into forward;
+//   - the tsnet.Server is injected by the caller (main) so the same
+//     tailnet node can also host the tailnet DNS listeners;
+//   - start() errors are returned to the caller instead of swallowed at
+//     setup time;
+//   - the entries map is immutable once published (state updates swap in
+//     a fresh map), so queries read it without a lock;
 //   - the IPN bus watcher closes each watcher on reconnect instead of
 //     deferring across the retry loop.
 package tailnetdns
@@ -36,16 +34,15 @@ const (
 	TypeAAAA
 )
 
-// ServeDNS implements the plugin.Handler interface. It is called for
-// queries on the zone configured in the Corefile, after the "errors" and
-// "log" wrappers and before "forward".
+// ServeDNS implements the plugin.Handler interface. Corefile order:
+// after the "errors" and "log" wrappers, before "forward".
 func (t *Handler) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg) (int, error) {
 	msg := dns.Msg{}
 	msg.SetReply(r)
 	msg.Authoritative = true
 
-	// Snapshot the published map; netmap updates replace the whole map, so
-	// this snapshot stays valid and immutable for the rest of the query.
+	// Snapshot the entries map; netmap updates swap in a fresh map, so
+	// the snapshot stays valid and immutable for the rest of the query.
 	t.mu.RLock()
 	entries := t.entries
 	t.mu.RUnlock()
