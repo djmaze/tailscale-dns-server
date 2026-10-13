@@ -11,7 +11,7 @@ services:
       DNS_DOMAIN: ${DNS_DOMAIN:?DNS_DOMAIN is required, e.g. example.com}
       TAILSCALE_DOMAIN: ${TAILSCALE_DOMAIN:?TAILSCALE_DOMAIN is required, e.g. example.net}
       # Optional — defaults are baked into the image.
-      TS_HOSTNAME: ${TS_HOSTNAME:-coredns-test}
+      TS_HOSTNAME: ${TS_HOSTNAME:-dns}
       TS_AUTHKEY: ${TS_AUTHKEY:-}
       DNS_PORT: ${DNS_PORT:-53}
       # Upstream resolver(s) for names outside the tailnet. Deliberately

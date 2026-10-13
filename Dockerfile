@@ -41,7 +41,7 @@ RUN mkdir -p /data
 # The loopback bind needs the port (root); the tailnet listeners do not.
 # The domains intentionally have no default: the container fails fast unless
 # both are set.
-ENV TS_HOSTNAME=coredns-test \
+ENV TS_HOSTNAME=dns \
     HOME=/data
 
 # tsnet stores the tailnet node key under $HOME/tsnet; keep it across restarts.
