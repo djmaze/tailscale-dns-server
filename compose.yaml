@@ -21,6 +21,9 @@ services:
       # SERVFAIL after an i/o timeout. Set your own if you prefer a LAN
       # resolver or Pi-hole.
       UPSTREAM_DNS: "${UPSTREAM_DNS:-1.1.1.1:53 8.8.8.8:53}"
+      # CoreDNS debug mode, off unless you set DEBUG=true: prints
+      # debug-level log messages to the container logs.
+      DEBUG: ${DEBUG:-false}
     # ports:
       # The container runs as root and listens on DNS_PORT directly.
       # With TS_AUTHKEY set, tailnet peers reach the server on the node's

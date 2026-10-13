@@ -36,6 +36,8 @@ RUN mkdir -p /data
 #                      separated: host[:port], [ipv6]:port and/or
 #                      resolv.conf paths (default /etc/resolv.conf, which
 #                      inside a container means the runtime's own resolver)
+#   DEBUG              true enables the CoreDNS debug directive: prints
+#                      debug-level log messages to stdout (default false)
 # The loopback bind needs the port (root); the tailnet listeners do not.
 # The domains intentionally have no default: the container fails fast unless
 # both are set.

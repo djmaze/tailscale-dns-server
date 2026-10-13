@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -96,24 +97,49 @@ func envOr(key, def string) string {
 	return def
 }
 
+// envBoolOr interprets the environment variable named key as a boolean
+// (strconv.ParseBool syntax, e.g. true/1/on), falling back to def when it
+// is unset, empty or not parseable.
+func envBoolOr(key string, def bool) bool {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
+		}
+	}
+	return def
+}
+
 // caddyfileTemplate is the CoreDNS Caddyfile, parameterized by the served
 // DNS zone (%[1]s), the listen port (%[2]s), the tailscale domain the
-// tailscale plugin resolves (%[3]s) and the upstream resolver targets for
+// tailscale plugin resolves (%[3]s), the upstream resolver targets for
 // everything that misses the tailnet (%[4]s, one forward target or more,
-// space separated). Tailnet listeners are attached separately in main once
-// the embedded tsnet node is up; the hostname the node registers with is a
+// space separated) and the optional debug directive (%[5]s, the debug line
+// or empty). Tailnet listeners are attached separately in main once the
+// embedded tsnet node is up; the hostname the node registers with is a
 // main-level setting, not a directive option.
 const caddyfileTemplate = `
 %[1]s:%[2]s {
 	tailscale %[3]s {
 		fallthrough
 	}
-	forward . %[4]s
-	debug
+	forward . %[4]s%[5]s
 	log
 	errors
 }
 `
+
+// renderCaddyfile renders the Caddyfile contents. The debug directive is
+// only emitted when debug is enabled; without it CoreDNS suppresses
+// debug-level log messages and keeps its automatic panic recovery. (With
+// the errors plugin in the chain a recover handler stays installed either
+// way, so in practice the directive controls log verbosity.)
+func renderCaddyfile(dnsDomain, dnsPort, tailscaleDomain, upstream string, debug bool) string {
+	debugDirective := ""
+	if debug {
+		debugDirective = "\n\tdebug"
+	}
+	return fmt.Sprintf(caddyfileTemplate, dnsDomain, dnsPort, tailscaleDomain, upstream, debugDirective)
+}
 
 func main() {
 	var (
@@ -131,6 +157,8 @@ func main() {
 			"upstream resolver(s) for names outside the tailnet, space separated: resolver addresses (host[:port] or [ipv6]:port) and/or resolv.conf paths (env UPSTREAM_DNS)")
 		tsDir = flag.String("ts-dir", envOr("TS_DIR", ""),
 			"state dir for the embedded tailscale node (env TS_DIR); default $HOME/tsnet")
+		debug = flag.Bool("debug", envBoolOr("DEBUG", false),
+			"enable the CoreDNS debug directive: prints debug-level log messages to stdout and inhibits the server's panic recovery (env DEBUG)")
 	)
 	flag.Parse()
 
@@ -201,8 +229,12 @@ func main() {
 	if srv != nil {
 		mode = "embedded tsnet, auth key set"
 	}
-	fmt.Printf("Serving DNS domain %s on port %s, tailscale domain %s, upstream %s (hostname %s, %s)\n",
-		*dnsDomain, *dnsPort, *tailscaleDomain, upstream, *tailscaleHostname, mode)
+	debugMode := "off"
+	if *debug {
+		debugMode = "on"
+	}
+	fmt.Printf("Serving DNS domain %s on port %s, tailscale domain %s, upstream %s (hostname %s, %s, debug %s)\n",
+		*dnsDomain, *dnsPort, *tailscaleDomain, upstream, *tailscaleHostname, mode, debugMode)
 
 	// dnsserver.Directives is the order in which plugins handle a request,
 	// NOT the order in the Caddyfile above: the chain is compiled from this
@@ -210,11 +242,12 @@ func main() {
 	// see (and log) requests that still reach them, so they must run before
 	// the plugins that answer and write the response; tailscale must run
 	// before forward so tailnet names resolve there first and only misses
-	// fall through to forward.
+	// fall through to forward. debug is always listed but only ever set up
+	// when the Caddyfile contains the directive, i.e. when -debug is on.
 	dnsserver.Directives = []string{"debug", "errors", "log", "tailscale", "forward"}
 	instance, err := caddy.Start(caddy.CaddyfileInput{
 		Filepath:       "Corefile",
-		Contents:       []byte(fmt.Sprintf(caddyfileTemplate, *dnsDomain, *dnsPort, *tailscaleDomain, upstream)),
+		Contents:       []byte(renderCaddyfile(*dnsDomain, *dnsPort, *tailscaleDomain, upstream, *debug)),
 		ServerTypeName: "dns",
 	})
 	if err != nil {
